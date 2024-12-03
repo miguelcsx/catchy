@@ -5,12 +5,13 @@
 #include <llvm/Support/CommandLine.h>
 #include <llvm/Support/InitLLVM.h>
 #include <llvm/Support/raw_ostream.h>
-#include <llvm/Support/Format.h>
 #include <spdlog/spdlog.h>
 #include <filesystem>
-#include <fstream>
+#include <vector>
+#include <tabulate/table.hpp>
 
 using namespace llvm;
+using namespace tabulate;
 
 // Command line options
 static cl::OptionCategory CatchyCategory("Catchy Options");
@@ -21,27 +22,10 @@ static cl::opt<std::string> InputPath(
     cl::Required,
     cl::cat(CatchyCategory));
 
-static cl::opt<std::string> Language(
-    "language",
-    cl::desc("Specify the programming language"),
-    cl::value_desc("lang"),
-    cl::cat(CatchyCategory));
-
 static cl::opt<unsigned> Threshold(
     "threshold",
     cl::desc("Minimum complexity threshold (default: 0)"),
     cl::init(0),
-    cl::cat(CatchyCategory));
-
-static cl::opt<std::string> OutputFormat(
-    "format",
-    cl::desc("Output format (json, toml, text)"),
-    cl::init("text"),
-    cl::cat(CatchyCategory));
-
-static cl::list<std::string> IgnorePatterns(
-    "ignore",
-    cl::desc("Patterns to ignore (can be specified multiple times)"),
     cl::cat(CatchyCategory));
 
 static cl::opt<bool> Recursive(
@@ -56,138 +40,96 @@ static cl::opt<bool> Verbose(
     cl::init(false),
     cl::cat(CatchyCategory));
 
-void output_results_json(const std::vector<catchy::analysis::AnalysisResult>& results) {
-    // Calculate total complexity
+// Function to display results using Tabulate
+void display_results(const std::vector<catchy::analysis::AnalysisResult>& results) {
+    using catchy::analysis::AnalysisResult;
+
+    Table table;
+
+    // Add headers
+    table.add_row({"Path", "File", "Function", "Complexity"});
+    table[0].format()
+        .font_style({FontStyle::bold})
+        .font_align(FontAlign::center)
+        .font_background_color(Color::cyan);
+
     size_t total_complexity = 0;
+    std::unordered_map<std::string, size_t> complexity_per_file;
+
+    // Add rows with results
     for (const auto& result : results) {
+        std::string file_name = std::filesystem::path(result.file_path).filename().string();
+        table.add_row({
+            result.file_path,
+            file_name,
+            result.function_name,
+            std::to_string(result.complexity)
+        });
+
         total_complexity += result.complexity;
+        complexity_per_file[result.file_path] += result.complexity;
     }
 
-    outs() << "{\n  \"total_complexity\": " << total_complexity << ",\n"
-           << "  \"results\": [\n";
-    for (size_t i = 0; i < results.size(); ++i) {
-        const auto& result = results[i];
-        outs() << "    {\n"
-               << "      \"file\": \"" << result.file_path << "\",\n"
-               << "      \"function\": \"" << result.function_name << "\",\n"
-               << "      \"complexity\": " << result.complexity << ",\n"
-               << "      \"start_line\": " << result.start_line << ",\n"
-               << "      \"end_line\": " << result.end_line << ",\n"
-               << "      \"language\": \"" << result.language << "\"";
-        
-        if (!result.factors.empty()) {
-            outs() << ",\n      \"factors\": [\n";
-            for (size_t j = 0; j < result.factors.size(); ++j) {
-                const auto& factor = result.factors[j];
-                outs() << "        {\n"
-                       << "          \"description\": \"" << factor.description << "\",\n"
-                       << "          \"increment\": " << factor.increment << ",\n"
-                       << "          \"line_number\": " << factor.line_number << "\n"
-                       << "        }" << (j < result.factors.size() - 1 ? "," : "") << "\n";
-            }
-            outs() << "      ]";
-        }
-        
-        outs() << "\n    }" << (i < results.size() - 1 ? "," : "") << "\n";
+    // Format rows
+    for (size_t i = 1; i < table.size(); ++i) {
+        table[i].format().font_align(FontAlign::left);
     }
-    outs() << "  ]\n}\n";
-}
 
-void output_results_text(const std::vector<catchy::analysis::AnalysisResult>& results) {
-    for (const auto& result : results) {
-        outs() << "File: " << result.file_path << "\n"
-               << "Function: " << result.function_name << "\n"
-               << "Language: " << result.language << "\n"
-               << "Lines: " << result.start_line << "-" << result.end_line << "\n"
-               << "Complexity: " << result.complexity << "\n";
-        
-        if (Verbose && !result.factors.empty()) {
-            outs() << "Complexity Factors:\n";
-            for (const auto& factor : result.factors) {
-                outs() << "  - " << factor.description 
-                       << " (line " << factor.line_number 
-                       << ", +" << factor.increment << ")\n";
-            }
-        }
-        outs() << "\n";
+    // Print the table
+    std::cout << table << std::endl;
+
+    // Display summary
+    std::cout << "\nSummary:\n";
+    if (complexity_per_file.size() > 1) {
+        std::cout << "Files analyzed: " << complexity_per_file.size() << "\n";
     }
-    // Total complexity
-    size_t total_complexity = 0;
-    for (const auto& result : results) {
-        total_complexity += result.complexity;
+    for (const auto& [file, complexity] : complexity_per_file) {
+        std::cout << "Total for file " << file << ": " << complexity << "\n";
     }
-    outs() << "Total complexity: " << total_complexity << "\n";
+    std::cout << "Total complexity for all files: " << total_complexity << "\n";
 }
 
 int main(int argc, char **argv) {
     InitLLVM X(argc, argv);
-    
+
     // Configure spdlog
     if (Verbose) {
         spdlog::set_level(spdlog::level::debug);
     } else {
         spdlog::set_level(spdlog::level::warn);
     }
-    
+
     // Parse command line options
     cl::HideUnrelatedOptions(CatchyCategory);
     cl::ParseCommandLineOptions(argc, argv, "Catchy - Cognitive Complexity Analyzer\n");
-    
+
     try {
         // Initialize analyzer
         catchy::analysis::Analyzer analyzer;
         analyzer.set_complexity_threshold(Threshold);
-        
-        if (!Language.empty()) {
-            analyzer.set_language(Language);
-        }
-        
-        if (!IgnorePatterns.empty()) {
-            analyzer.set_ignore_patterns(std::vector<std::string>(
-                IgnorePatterns.begin(), 
-                IgnorePatterns.end()
-            ));
-        }
-        
+
         // Analyze based on input type
         std::vector<catchy::analysis::AnalysisResult> results;
-        
         std::filesystem::path input_path(InputPath.getValue());
-        
+
         if (std::filesystem::is_regular_file(input_path)) {
             if (Verbose) {
                 spdlog::info("Analyzing file: {}", input_path.string());
             }
             results = analyzer.analyze_file(input_path.string());
-        }
-        else if (std::filesystem::is_directory(input_path)) {
-            if (catchy::utils::is_git_repo(input_path.string())) {
-                if (Verbose) {
-                    spdlog::info("Analyzing git repository: {}", input_path.string());
-                }
-                results = analyzer.analyze_git_repository(input_path.string());
-            } else {
-                if (Verbose) {
-                    spdlog::info("Analyzing directory: {} (recursive: {})", 
-                        input_path.string(), Recursive ? "yes" : "no");
-                }
-                results = analyzer.analyze_directory(input_path.string(), Recursive);
+        } else if (std::filesystem::is_directory(input_path)) {
+            if (Verbose) {
+                spdlog::info("Analyzing directory: {} (recursive: {})", 
+                    input_path.string(), Recursive ? "yes" : "no");
             }
-        }
-        else {
+            results = analyzer.analyze_directory(input_path.string(), Recursive);
+        } else {
             spdlog::error("Invalid input path: {}", input_path.string());
             return 1;
         }
 
-        // Output results
-        if (OutputFormat == "json") {
-            output_results_json(results);
-        } else if (OutputFormat == "toml") {
-            spdlog::error("TOML output format is not yet supported");
-            return 1;
-        } else {
-            output_results_text(results);
-        }
+        // Display results using Tabulate
+        display_results(results);
     } catch (const std::exception& e) {
         spdlog::error("An error occurred: {}", e.what());
         return 1;

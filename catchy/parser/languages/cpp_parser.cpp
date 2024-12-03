@@ -88,7 +88,7 @@ void CppParser::collect_functions(TSNode node, const std::string& source, std::v
                     info.name = extract_node_text(name_node, source);
                     spdlog::debug("Found function name: {}", info.name);
                 } else {
-                    spdlog::warn("Could not find function name in declarator");
+                    spdlog::debug("Could not find function name in declarator");
                 }
             } else {
                 spdlog::warn("Could not find declarator node");
@@ -110,7 +110,7 @@ void CppParser::collect_functions(TSNode node, const std::string& source, std::v
                 spdlog::debug("Found function body, length: {}", info.body.length());
                 spdlog::debug("Function body:\n{}", info.body);
             } else {
-                spdlog::warn("No function body found");
+                spdlog::debug("No function body found");
             }
             
             // Get line numbers
@@ -169,7 +169,7 @@ TSNode CppParser::find_function_name(TSNode declarator) {
         }
     }
     
-    spdlog::warn("No identifier found in declarator");
+    spdlog::debug("No identifier found in declarator");
     return TSNode{};
 }
 
