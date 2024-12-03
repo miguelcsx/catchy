@@ -1,0 +1,27 @@
+name: catchy
+channels:
+  - conda-forge
+dependencies:
+  - benchmark>=1.9.1
+  - ccache>=4.10
+  - clang>=19
+  - clang-tools>=19
+  - clangxx>=19
+  - cmake>=3.30
+  - fmt>=11.0.2
+  - gtest>=1.15.2
+  - icu>=73
+  - libtree-sitter>=0.24
+  - libcxx>=19
+  - lld>=19
+  - lldb>=19
+  - llvm>=19
+  - llvm-tools>=19
+  - llvm-openmp>=19
+  - llvmdev>=19
+  - ninja>=1.12
+  - pkg-config>=0.29
+  - pre-commit>=4.0
+  - python>=3.11
+  - spdlog>=1.11.0
+  - zlib>=1.2
