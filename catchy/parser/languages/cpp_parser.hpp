@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "../parser_base.hpp"
+#include "parser/parser_base.hpp"
 #include <string>
 #include <vector>
 #include <memory>
@@ -35,9 +35,10 @@ public:
     std::vector<std::string> get_extensions() const override;
     std::string get_language_name() const override;
 
-private:
-    void collect_functions(TSNode node, const std::string& source, std::vector<FunctionInfo>& functions);
     TSNode find_function_name(TSNode declarator);
+
+private:
+    void collect_functions(TSNode node, const std::string& source, std::vector<FunctionInfo>& functions, const std::string& class_scope);
     void collect_parameters(TSNode parameter_list, const std::string& source, std::vector<std::string>& parameters);
 };
 

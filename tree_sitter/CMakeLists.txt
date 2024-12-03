@@ -89,7 +89,7 @@ endfunction()
 # Clone repositories
 checkout(tree-sitter v0.20.1)
 checkout(tree-sitter-cpp v0.20.0)
-# checkout(tree-sitter-python rust-0.19.1)
+checkout(tree-sitter-python rust-0.19.1)
 
 # Build tree-sitter library
 add_library(tree-sitter STATIC 
@@ -109,3 +109,4 @@ target_link_libraries(tree-sitter
 
 # Build language parsers
 add_language(CPP)
+add_language(Python)

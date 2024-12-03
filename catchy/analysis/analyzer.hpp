@@ -29,7 +29,7 @@ struct AnalysisResult {
 class Analyzer {
 public:
     Analyzer();
-    ~Analyzer();
+    ~Analyzer() = default;
 
     // Analysis methods
     std::vector<AnalysisResult> analyze_file(const std::string &file_path);
@@ -48,12 +48,17 @@ private:
     
     // Tree-sitter helper functions
     TSNode find_function_node(TSNode node, const std::string& function_name, const std::string& source);
+    TSNode find_nested_function(TSNode body_node, const std::string& function_name, const std::string& source);
+    TSNode find_cpp_function_name(TSNode declarator);
     std::string extract_function_name(TSNode node, const std::string& source);
 
     std::string language_;
     size_t complexity_threshold_ {0};
     std::vector<std::string> ignore_patterns_;
     std::unique_ptr<complexity::CognitiveComplexity> complexity_calculator_;
+
+    std::unique_ptr<TSParser, void(*)(TSParser*)> parser_{nullptr, ts_parser_delete};
+    std::unique_ptr<TSTree, void(*)(TSTree*)> tree_{nullptr, ts_tree_delete};
 };
 
 } // namespace catchy::analysis

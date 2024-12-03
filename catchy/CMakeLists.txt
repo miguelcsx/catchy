@@ -45,6 +45,7 @@ target_link_libraries(catchy_core
         spdlog::spdlog
         tree-sitter
         tree-sitter-CPP
+        tree-sitter-Python
         LLVM
 )
 

@@ -1,6 +1,7 @@
 #include "analyzer.hpp"
 #include "parser/parser_factory.hpp"
 #include "parser/languages/cpp_parser.hpp"
+#include "parser/languages/python_parser.hpp"
 #include "utils/safe_conversions.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/git.hpp"
@@ -11,33 +12,49 @@
 namespace catchy::analysis {
 
 Analyzer::Analyzer() 
-    : complexity_calculator_(std::make_unique<complexity::CognitiveComplexity>()) 
+    : complexity_calculator_(std::make_unique<complexity::CognitiveComplexity>()),
+      parser_(ts_parser_new(), ts_parser_delete)
 {
+    if (!parser_) {
+        throw std::runtime_error("Failed to create tree-sitter parser");
+    }
+
     try {
-        // Register available parsers
-        parser::ParserFactory::instance().register_parser<parser::languages::CppParser>();
+        // Register parsers
+        auto& factory = parser::ParserFactory::instance();
+        
+        // Register C++ parser
+        factory.register_parser<parser::languages::CppParser>();
         spdlog::debug("Registered C++ parser");
+
+        // Register Python parser
+        factory.register_parser<parser::languages::PythonParser>();
+        spdlog::debug("Registered Python parser");
+
     } catch (const std::exception& e) {
         spdlog::error("Failed to initialize parsers: {}", e.what());
         throw;
     }
 }
 
-Analyzer::~Analyzer() = default;
-
 std::vector<AnalysisResult> Analyzer::analyze_file(const std::string& file_path) {
     try {
+        spdlog::info("Analyzing file: {}", file_path);
+        
         // Read file content
         std::string content = utils::read_file_content(file_path);
-        spdlog::debug("File content:\n{}", content);
+        if (content.empty()) {
+            spdlog::error("Empty file content for: {}", file_path);
+            return {};
+        }
         
-        // Detect language if not specified
+        // Detect language
         std::string lang = language_.empty() ? detect_language(file_path) : language_;
         if (lang.empty()) {
             spdlog::error("Could not detect language for file: {}", file_path);
             return {};
         }
-        spdlog::debug("Detected language: {}", lang);
+        spdlog::info("Detected language: {}", lang);
         
         return analyze_content(content, file_path, lang);
     } catch (const std::exception& e) {
@@ -94,12 +111,15 @@ std::vector<AnalysisResult> Analyzer::analyze_git_repository(
 }
 
 std::string Analyzer::detect_language(const std::string& file_path) const {
-    auto parser = parser::ParserFactory::instance().create_parser_for_file(file_path);
+    auto& factory = parser::ParserFactory::instance();
+    auto parser = factory.create_parser_for_file(file_path);
+    
     if (parser) {
         auto lang = parser->get_language_name();
-        spdlog::debug("Language detected from file extension: {}", lang);
+        spdlog::debug("Language detected: {} for file: {}", lang, file_path);
         return lang;
     }
+    
     spdlog::warn("No parser found for file: {}", file_path);
     return "";
 }
@@ -123,89 +143,75 @@ std::vector<AnalysisResult> Analyzer::analyze_content(
 ) {
     std::vector<AnalysisResult> results;
     
-    auto parser = parser::ParserFactory::instance().create_parser(language);
-    if (!parser) {
-        spdlog::error("No parser available for language: {}", language);
-        return results;
-    }
-    
-    // Initialize parser
-    if (!parser->initialize()) {
-        spdlog::error("Failed to initialize parser for {}", file_path);
-        return results;
-    }
-    
-    // Parse the entire file first
-    TSParser* ts_parser = ts_parser_new();
-    if (!ts_parser) {
-        spdlog::error("Failed to create tree-sitter parser");
-        return results;
-    }
-
-    // Set language for tree-sitter parser
-    if (language == "cpp") {
-        ts_parser_set_language(ts_parser, tree_sitter_cpp());
-    } else {
-        spdlog::error("Unsupported language for tree-sitter: {}", language);
-        ts_parser_delete(ts_parser);
-        return results;
-    }
-
-    // Parse the entire file
-    TSTree* full_tree = ts_parser_parse_string(
-        ts_parser,
-        nullptr,
-        content.c_str(),
-        utils::safe_string_length(content)
-    );
-
-    if (!full_tree) {
-        spdlog::error("Failed to parse file: {}", file_path);
-        ts_parser_delete(ts_parser);
-        return results;
-    }
-
-    // Parse functions
-    parser::ParserContext context{content, file_path};
-    auto functions = parser->parse_functions(context);
-    
-    spdlog::debug("Found {} functions to analyze", functions.size());
-    
-    // Analyze each function
-    for (const auto& func : functions) {
-        spdlog::debug("Analyzing function '{}' (lines {}-{})", 
-            func.name, func.start_line, func.end_line);
-            
-        AnalysisResult result;
-        result.file_path = file_path;
-        result.language = language;
-        result.function_name = func.name;
-        result.start_line = func.start_line;
-        result.end_line = func.end_line;
-
-        // Extract function node from the full tree
-        TSNode root_node = ts_tree_root_node(full_tree);
-        TSNode function_node = find_function_node(root_node, func.name, content);
-
-        if (!ts_node_is_null(function_node)) {
-            auto complexity_result = complexity_calculator_->calculate(function_node, content);
-            
-            result.complexity = complexity_result.total_complexity;
-            result.factors = std::move(complexity_result.factors);
-            
-            spdlog::debug("Function '{}' complexity: {}", func.name, result.complexity);
-            
-            // Only add if complexity is above threshold
-            if (result.complexity >= complexity_threshold_) {
-                results.push_back(std::move(result));
-            }
+    try {
+        // Set up parser for the correct language
+        if (language == "cpp") {
+            ts_parser_set_language(parser_.get(), tree_sitter_cpp());
+        } else if (language == "python") {
+            ts_parser_set_language(parser_.get(), tree_sitter_python());
         } else {
-            spdlog::error("Failed to find function node for {}", func.name);
+            spdlog::error("Unsupported language: {}", language);
+            return results;
         }
+
+        // Parse the entire file
+        tree_.reset(ts_parser_parse_string(
+            parser_.get(),
+            nullptr,
+            content.c_str(),
+            static_cast<uint32_t>(content.length())
+        ));
+
+        if (!tree_) {
+            spdlog::error("Failed to parse content");
+            return results;
+        }
+
+        // Get functions
+        auto parser = parser::ParserFactory::instance().create_parser(language);
+        if (!parser || !parser->initialize()) {
+            spdlog::error("Failed to initialize parser");
+            return results;
+        }
+
+        parser::ParserContext context{content, file_path};
+        auto functions = parser->parse_functions(context);
+        
+        spdlog::debug("Found {} functions to analyze", functions.size());
+        
+        // Analyze each function
+        TSNode root_node = ts_tree_root_node(tree_.get());
+        
+        for (const auto& func : functions) {
+            if (func.name.empty()) {
+                continue;
+            }
+
+            AnalysisResult result;
+            result.file_path = file_path;
+            result.language = language;
+            result.function_name = func.name;
+            result.start_line = func.start_line;
+            result.end_line = func.end_line;
+
+            // Find function node in the parsed tree
+            TSNode function_node = find_function_node(root_node, func.name, content);
+            
+            if (!ts_node_is_null(function_node)) {
+                auto complexity_result = complexity_calculator_->calculate(function_node, content);
+                result.complexity = complexity_result.total_complexity;
+                result.factors = std::move(complexity_result.factors);
+                
+                if (result.complexity >= complexity_threshold_) {
+                    results.push_back(std::move(result));
+                }
+            } else {
+                spdlog::debug("Could not find node for function: {}", func.name);
+            }
+        }
+    } catch (const std::exception& e) {
+        spdlog::error("Error in analyze_content: {}", e.what());
     }
-    
-    ts_tree_delete(full_tree);
-    ts_parser_delete(ts_parser);
     
     return results;
 }
@@ -216,13 +222,56 @@ TSNode Analyzer::find_function_node(TSNode node, const std::string& function_nam
     }
 
     const char* type = ts_node_type(node);
-    if (strcmp(type, "function_definition") == 0 || strcmp(type, "function_declaration") == 0) {
-        // Extract the function name from the node
+    
+    // Handle Python functions (including decorated and nested ones)
+    if (strcmp(type, "function_definition") == 0 || 
+        strcmp(type, "decorated_definition") == 0) {
+        
+        TSNode actual_func_node = node;
+        if (strcmp(type, "decorated_definition") == 0) {
+            actual_func_node = ts_node_child_by_field_name(node, "definition", strlen("definition"));
+            if (ts_node_is_null(actual_func_node)) {
+                return TSNode{};
+            }
+        }
+
+        TSNode name_node = ts_node_child_by_field_name(actual_func_node, "name", strlen("name"));
+        if (!ts_node_is_null(name_node)) {
+            std::string current_name = extract_function_name(name_node, source);
+            
+            // Handle nested functions by building the full name
+            std::string full_name = current_name;
+            TSNode parent = ts_node_parent(actual_func_node);
+            
+            while (!ts_node_is_null(parent)) {
+                if (strcmp(ts_node_type(parent), "function_definition") == 0) {
+                    TSNode parent_name = ts_node_child_by_field_name(parent, "name", strlen("name"));
+                    if (!ts_node_is_null(parent_name)) {
+                        std::string parent_name_str = extract_function_name(parent_name, source);
+                        full_name = parent_name_str + "." + full_name;
+                    }
+                }
+                parent = ts_node_parent(parent);
+            }
+            
+            if (full_name == function_name) {
+                return actual_func_node;
+            }
+        }
+    }
+    
+    // Handle C++ functions
+    if (strcmp(type, "function_definition") == 0) {
         TSNode declarator = ts_node_child_by_field_name(node, "declarator", strlen("declarator"));
         if (!ts_node_is_null(declarator)) {
-            std::string current_func_name = extract_function_name(declarator, source);
-            if (current_func_name == function_name) {
-                return node;
+            auto cpp_parser = std::make_unique<parser::languages::CppParser>();
+            TSNode name_node = cpp_parser->find_function_name(declarator);
+            
+            if (!ts_node_is_null(name_node)) {
+                std::string current_name = extract_function_name(name_node, source);
+                if (current_name == function_name) {
+                    return node;
+                }
             }
         }
     }

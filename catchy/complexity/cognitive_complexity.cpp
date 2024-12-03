@@ -9,67 +9,39 @@
 namespace catchy::complexity {
 
 ComplexityResult CognitiveComplexity::calculate(TSNode root_node, const std::string &source_code) {
-    ComplexityResult total_result;
+    ComplexityResult result;
 
     if (ts_node_is_null(root_node)) {
-        spdlog::error("Received null root node");
-        return total_result;
+        spdlog::error("Received null root node in calculate");
+        return result;
     }
 
-    std::stack<TSNode> nodes;
-    nodes.push(root_node);
+    // Find the actual function body
+    TSNode body_node = root_node;
+    bool is_function = false;
 
-    while (!nodes.empty()) {
-        TSNode current = nodes.top();
-        nodes.pop();
+    try {
+        const char* node_type = ts_node_type(root_node);
+        spdlog::debug("Root node type in calculate: {}", node_type ? node_type : "null");
 
-        if (!ts_node_is_null(current)) {
-            const char* curr_type = ts_node_type(current);
-
-            if (strcmp(curr_type, "function_definition") == 0 || strcmp(curr_type, "function_declaration") == 0) {
-                // Get function name
-                TSNode declarator = ts_node_child_by_field_name(current, "declarator", strlen("declarator"));
-                std::string func_name = "unknown";
-                if (!ts_node_is_null(declarator)) {
-                    TSNode name_node = find_function_name(declarator);
-                    if (!ts_node_is_null(name_node)) {
-                        func_name = extract_node_text(name_node, source_code);
-                    }
-                }
-
-                // Analyze function body
-                TSNode body = ts_node_child_by_field_name(current, "body", strlen("body"));
-                if (!ts_node_is_null(body)) {
-                    ComplexityResult func_result;
-                    analyze_control_flow(body, source_code, func_result);
-
-                    // Store function's complexity
-                    total_result.function_complexities[func_name] = func_result.total_complexity;
-
-                    // Correctly add function complexity to the total
-                    total_result.total_complexity += func_result.total_complexity;
-
-                    // Append factors from this function to the total
-                    total_result.factors.insert(
-                        total_result.factors.end(),
-                        func_result.factors.begin(),
-                        func_result.factors.end()
-                    );
-
-                    spdlog::debug("Function '{}' complexity: {}", func_name, func_result.total_complexity);
-                }
-            }
-
-            // Add all children to the stack
-            uint32_t child_count = ts_node_child_count(current);
-            for (uint32_t i = child_count; i > 0; --i) {
-                nodes.push(ts_node_child(current, i - 1));
+        // Get the actual body for analysis
+        if (node_type && (strcmp(node_type, "function_definition") == 0 || 
+                         strcmp(node_type, "method_definition") == 0)) {
+            is_function = true;
+            body_node = ts_node_child_by_field_name(root_node, "body", strlen("body"));
+            if (ts_node_is_null(body_node)) {
+                spdlog::debug("Function body is null");
+                return result;
             }
         }
+    } catch (const std::exception& e) {
+        spdlog::error("Error in calculate: {}", e.what());
+        return result;
     }
 
-    spdlog::info("Total cognitive complexity: {}", total_result.total_complexity);
-    return total_result;
+    result.nesting_level = 0;
+    analyze_control_flow(body_node, source_code, result);
+    return result;
 }
 
 
@@ -89,42 +61,84 @@ std::string CognitiveComplexity::extract_node_text(TSNode node, const std::strin
     return source_code.substr(start, end - start);
 }
 
-void CognitiveComplexity::analyze_control_flow(TSNode node, const std::string& source_code, ComplexityResult& result) {
-    if (ts_node_is_null(node)) return;
 
-    const char* type = ts_node_type(node);
+void CognitiveComplexity::analyze_control_flow(TSNode node, const std::string& source_code, ComplexityResult& result) {
+    if (ts_node_is_null(node)) {
+        return;
+    }
 
     try {
+        const char* node_type = nullptr;
+        try {
+            node_type = ts_node_type(node);
+        } catch (...) {
+            spdlog::error("Failed to get node type");
+            return;
+        }
+
+        if (!node_type) {
+            spdlog::error("Node type is null");
+            return;
+        }
+
         TSPoint start_point = ts_node_start_point(node);
         size_t line_number = start_point.row + 1;
 
-        // Check if current node increases nesting level
-        bool increases_nesting = increases_nesting_level(node);
+        // Skip nested function definitions when calculating complexity
+        if (strcmp(node_type, "function_definition") == 0) {
+            TSNode parent = ts_node_parent(node);
+            // Only process the function body if this is not a nested function
+            bool is_nested = false;
+            while (!ts_node_is_null(parent)) {
+                const char* parent_type = ts_node_type(parent);
+                if (strcmp(parent_type, "function_definition") == 0) {
+                    is_nested = true;
+                    break;
+                }
+                parent = ts_node_parent(parent);
+            }
+            
+            if (!is_nested) {
+                // Process the function body for non-nested functions
+                TSNode body = ts_node_child_by_field_name(node, "body", strlen("body"));
+                if (!ts_node_is_null(body)) {
+                    analyze_control_flow(body, source_code, result);
+                }
+            }
+            return;
+        }
 
-        // Analyze current node
-        if (is_control_structure(node)) {
+        // Check for control structures
+        if (is_control_structure(node_type)) {
             bool is_else_if = false;
-            if (strcmp(type, "if_statement") == 0) {
+
+            // Handle else-if chains
+            if (strcmp(node_type, "if_statement") == 0) {
                 TSNode parent = ts_node_parent(node);
-                if (!ts_node_is_null(parent) && strcmp(ts_node_type(parent), "else_clause") == 0) {
-                    is_else_if = true;
-                    increment_for_hybrid(result, "else-if statement", line_number);
+                if (!ts_node_is_null(parent)) {
+                    const char* parent_type = ts_node_type(parent);
+                    if (parent_type && (strcmp(parent_type, "else_clause") == 0 || 
+                                      strcmp(parent_type, "elif_clause") == 0)) {
+                        is_else_if = true;
+                        increment_for_hybrid(result, "else-if chain", line_number);
+                    }
                 }
             }
 
             if (!is_else_if) {
                 // Base increment for control structure
-                increment_for_structural(result, std::string("Control structure: ") + type, line_number);
+                increment_for_structural(result, std::string(node_type), line_number);
 
-                // Add nesting increment based on current nesting level
-                if (increases_nesting && result.nesting_level > 0) {
+                // Add nesting increment if needed
+                if (increases_nesting_level(node_type) && result.nesting_level > 0) {
                     increment_for_nesting(result, result.nesting_level,
-                        std::string("Nested ") + type, line_number);
+                        std::string("Nested ") + node_type, line_number);
                 }
             }
         }
 
-        // Increase nesting level if needed
+        // Handle nesting
+        bool increases_nesting = increases_nesting_level(node_type);
         if (increases_nesting) {
             result.nesting_level++;
         }
@@ -132,30 +146,32 @@ void CognitiveComplexity::analyze_control_flow(TSNode node, const std::string& s
         // Process children
         uint32_t child_count = ts_node_child_count(node);
         for (uint32_t i = 0; i < child_count; i++) {
-            analyze_control_flow(ts_node_child(node, i), source_code, result);
+            TSNode child = ts_node_child(node, i);
+            if (!ts_node_is_null(child)) {
+                analyze_control_flow(child, source_code, result);
+            }
         }
 
-        // Restore nesting level
         if (increases_nesting) {
             result.nesting_level--;
         }
-
     } catch (const std::exception& e) {
-        spdlog::error("Error analyzing node {}: {}", type, e.what());
+        spdlog::error("Error in analyze_control_flow: {}", e.what());
     }
 }
 
-bool CognitiveComplexity::is_control_structure(TSNode node) {
-    const char* type = ts_node_type(node);
+
+bool CognitiveComplexity::is_control_structure(const char* type) {
     static const std::unordered_set<std::string> control_structures = {
         "if_statement",
         "for_statement",
-        "for_range_loop",  // For range-based for loops
         "while_statement",
         "do_statement",
         "catch_clause",
-        "switch_statement",
-        "case_statement"
+        "case_statement",
+        "for_range_loop",
+        "elif_clause",
+        "else_clause"
     };
     
     return control_structures.count(type) > 0;
@@ -166,21 +182,18 @@ bool CognitiveComplexity::is_boolean_operator(TSNode node) {
     return strcmp(type, "binary_expression") == 0;
 }
 
-bool CognitiveComplexity::increases_nesting_level(TSNode node) {
-    const char* type = ts_node_type(node);
+bool CognitiveComplexity::increases_nesting_level(const char* type) {
     static const std::unordered_set<std::string> nesting_structures = {
         "if_statement",
         "for_statement",
-        "for_range_loop",
         "while_statement",
         "do_statement",
         "catch_clause",
-        "switch_statement"
+        "for_range_loop"
     };
     
     return nesting_structures.count(type) > 0;
 }
-
 
 void CognitiveComplexity::analyze_boolean_operators(TSNode node, ComplexityResult& result) {
     if (ts_node_is_null(node)) return;
@@ -216,7 +229,6 @@ void CognitiveComplexity::increment_for_nesting(ComplexityResult& result,
     spdlog::debug("Added nesting complexity: +{} for {} at line {}", 
                  nesting_level, reason, line_number);
 }
-
 
 void CognitiveComplexity::increment_for_structural(ComplexityResult& result, 
                                                  const std::string& reason,
@@ -256,6 +268,5 @@ void CognitiveComplexity::increment_for_hybrid(ComplexityResult& result,
     spdlog::debug("Added hybrid complexity: +1 for {} at line {}", 
                  reason, line_number);
 }
-
 
 } // namespace catchy::complexity

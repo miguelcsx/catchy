@@ -7,7 +7,8 @@
 #include <vector>
 #include <tree_sitter/api.h>
 #include <map>
-
+#include <memory>
+#include <stdexcept>
 
 namespace catchy::complexity {
 
@@ -28,14 +29,23 @@ struct ComplexityResult {
 
 class CognitiveComplexity {
 public:
+    CognitiveComplexity() : parser_(ts_parser_new(), ts_parser_delete) {
+        if (!parser_) {
+            throw std::runtime_error("Failed to create tree-sitter parser");
+        }
+    }
     ComplexityResult calculate(TSNode root_node, const std::string &source_code);
 
 private:
+    std::unique_ptr<TSParser, void(*)(TSParser*)> parser_{nullptr, ts_parser_delete};
+    std::unique_ptr<TSTree, void(*)(TSTree*)> tree_{nullptr, ts_tree_delete};
     // Increment complexity based on different factors
     void increment_for_nesting(ComplexityResult& result, size_t increment, const std::string& reason, size_t line_number);
     void increment_for_structural(ComplexityResult& result, const std::string& reason, size_t line_number);
     void increment_for_fundamental(ComplexityResult& result, const std::string& reason, size_t line_number);
-    void increment_for_hybrid(ComplexityResult& result, const std::string& reason, size_t line_number);
+    void increment_for_hybrid(ComplexityResult& result, 
+                                             const std::string& reason,
+                                             size_t line_number);
 
     // Analyze specific structures
     void analyze_control_flow(TSNode node, const std::string& source_code, ComplexityResult& result);
@@ -45,9 +55,9 @@ private:
     void analyze_recursion(TSNode node, ComplexityResult& result);
 
     // Helper functions
-    bool is_control_structure(TSNode node);
+    bool is_control_structure(const char* type);
     bool is_boolean_operator(TSNode node);
-    bool increases_nesting_level(TSNode node);
+    bool increases_nesting_level(const char* type);
     TSNode find_function_name(TSNode declarator);
     std::string extract_node_text(TSNode node, const std::string &source_code);
 };

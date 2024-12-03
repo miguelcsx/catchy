@@ -17,6 +17,7 @@ struct FunctionInfo {
     size_t start_line;
     size_t end_line;
     std::string body;
+    TSNode node;
     std::vector<std::string> parameters;
 };
 

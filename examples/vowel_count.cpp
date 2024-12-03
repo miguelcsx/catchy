@@ -22,13 +22,4 @@ std::string countVowels(const std::string& word) {
     return "contains " + std::to_string(count) + " vowels";
 } // cognitive complexity = 7
 
-
-int main() {
-    std::string word;
-    std::cout << "Enter a word: ";
-    std::cin >> word;
-
-    std::cout << word << " " << countVowels(word) << std::endl;
-
-   return 0;
-} // cognitive complexity = 0
+// Total cognitive complexity = 7
