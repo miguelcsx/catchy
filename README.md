@@ -60,6 +60,22 @@ A summary of total complexity per file and overall complexity is provided.
 
 ![Sample Output](resources/sample_output.png)
 
+## Github Action
+
+Catchy can be integrated into your CI/CD pipeline using Github Actions. The following example demonstrates how to use catchy to analyze code complexity in a pull request:
+
+```yaml
+name: Code Complexity Check
+on: [pull_request]
+jobs:
+  complexity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: miguelcsx/catchy@v1.0.0
+        with:
+          threshold: '15'
+```
+
 ## Acknowledgments
 This project builds upon:
 - The cognitive complexity metric defined in ["Cognitive Complexity - A new way of measuring understandability"](https://www.sonarsource.com/resources/cognitive-complexity/) by G. Ann Campbell at SonarSource

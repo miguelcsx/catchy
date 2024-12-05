@@ -1,0 +1,62 @@
+name: 'Catchy Code Complexity Analyzer'
+description: 'Analyzes code complexity in Pull Requests for C/C++ and Python'
+author: 'miguelcsx'
+branding:
+  icon: 'activity'  
+  color: 'blue'
+
+inputs:
+  threshold:
+    description: 'Minimum complexity threshold'
+    required: false
+    default: '10'
+  file_patterns:
+    description: 'File patterns to analyze'
+    required: false
+    default: |
+      **.cpp
+      **.hpp
+      **.h
+      **.c
+      **.py
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v4
+    
+    - uses: conda-incubator/setup-miniconda@v3
+      with:
+        miniforge-variant: Mambaforge
+        activate-environment: catchy
+        environment-file: ${{ github.action_path }}/../../catchy.yml
+        
+    - name: Build Catchy
+      shell: bash -l {0}
+      run: |
+        cd ${{ github.action_path }}/../../
+        cmake -B build -S . -G Ninja
+        cmake --build build
+        
+    - name: Get Changed Files
+      id: files
+      uses: tj-actions/changed-files@v41
+      with:
+        files: ${{ inputs.file_patterns }}
+        
+    - name: Analyze Files
+      if: steps.files.outputs.any_changed == 'true'
+      shell: bash -l {0}
+      run: |
+        cd ${{ github.action_path }}/../../
+        echo "### Complexity Analysis Results" > complexity-report.md
+        echo "\`\`\`" >> complexity-report.md
+        for file in ${{ steps.files.outputs.all_changed_files }}; do
+          if [ -f "$file" ]; then
+            echo "Analyzing $file..." >> complexity-report.md
+            ./build/catchy "$file" --threshold=${{ inputs.threshold }} >> complexity-report.md
+            echo "" >> complexity-report.md
+          fi
+        done
+        echo "\`\`\`" >> complexity-report.md
+        cat complexity-report.md >> $GITHUB_STEP_SUMMARY
