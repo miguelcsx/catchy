@@ -1,64 +1,13 @@
-name: Catchy Complexity Check
-
+name: Code Complexity Check
 on:
   pull_request:
-    types: [opened, synchronize]
-
+  push:
+    branches: [ main ]  # or your default branch
 jobs:
-  complexity-check:
+  complexity:
     runs-on: ubuntu-latest
-    
     steps:
-    - uses: actions/checkout@v4
-      
-    - name: Set up Conda
-      uses: conda-incubator/setup-miniconda@v3
-      with:
-        miniforge-variant: Mambaforge
-        activate-environment: catchy
-        environment-file: catchy.yml
-
-    - name: Build Catchy
-      shell: bash -l {0}
-      run: |
-        cmake -B build -S . -G Ninja
-        cmake --build build
-
-    - name: Get Changed Files
-      id: files
-      uses: tj-actions/changed-files@v41
-      with:
-        files: |
-          **.cpp
-          **.hpp
-          **.h
-          **.c
-
-    - name: Analyze Changed Files
-      if: steps.files.outputs.any_changed == 'true'
-      shell: bash -l {0}
-      run: |
-        RESULTS=""
-        for file in ${{ steps.files.outputs.all_changed_files }}; do
-          if [ -f "$file" ]; then
-            OUTPUT=$(./build/catchy "$file" --threshold=10 --verbose)
-            RESULTS="${RESULTS}\n\nAnalysis for ${file}:\n${OUTPUT}"
-          fi
-        done
-        echo "$RESULTS" > complexity-report.txt
-        echo "COMPLEXITY_REPORT<<EOF" >> $GITHUB_ENV
-        echo "$RESULTS" >> $GITHUB_ENV
-        echo "EOF" >> $GITHUB_ENV
-
-    - name: Comment PR
-      if: steps.files.outputs.any_changed == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const report = process.env.COMPLEXITY_REPORT;
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.name,
-            body: '## Catchy Complexity Analysis\n```\n' + report + '\n```'
-          });
+      - uses: actions/checkout@v4  # Add this
+      - uses: miguelcsx/catchy@v1.0.3
+        with:
+          threshold: '10'

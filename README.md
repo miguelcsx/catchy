@@ -71,7 +71,7 @@ jobs:
   complexity:
     runs-on: ubuntu-latest
     steps:
-      - uses: miguelcsx/catchy@v1.0.0
+      - uses: miguelcsx/catchy@v1.0.3
         with:
           threshold: '15'
 ```

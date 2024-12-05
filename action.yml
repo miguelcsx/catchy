@@ -1,62 +1,62 @@
 name: 'Catchy Code Complexity Analyzer'
 description: 'Analyzes code complexity in Pull Requests for C/C++ and Python'
 author: 'miguelcsx'
-branding:
-  icon: 'activity'  
-  color: 'blue'
 
 inputs:
   threshold:
     description: 'Minimum complexity threshold'
     required: false
     default: '10'
-  file_patterns:
-    description: 'File patterns to analyze'
-    required: false
-    default: |
-      **.cpp
-      **.hpp
-      **.h
-      **.c
-      **.py
 
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v4
-    
-    - uses: conda-incubator/setup-miniconda@v3
+    - name: Checkout Catchy
+      uses: actions/checkout@v4
       with:
-        miniforge-variant: Mambaforge
-        activate-environment: catchy
-        environment-file: ${{ github.action_path }}/../../catchy.yml
+        repository: miguelcsx/catchy
+        path: catchy
+
+    - name: Setup Mamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        environment-file: catchy/catchy.yml
+        environment-name: catchy
         
     - name: Build Catchy
       shell: bash -l {0}
       run: |
-        cd ${{ github.action_path }}/../../
+        cd catchy
         cmake -B build -S . -G Ninja
         cmake --build build
         
-    - name: Get Changed Files
-      id: files
-      uses: tj-actions/changed-files@v41
+    - name: Get PR Files
+      id: pr-files
+      uses: trilom/file-changes-action@v1.2.4
       with:
-        files: ${{ inputs.file_patterns }}
+        output: ''
         
     - name: Analyze Files
-      if: steps.files.outputs.any_changed == 'true'
       shell: bash -l {0}
       run: |
-        cd ${{ github.action_path }}/../../
-        echo "### Complexity Analysis Results" > complexity-report.md
-        echo "\`\`\`" >> complexity-report.md
-        for file in ${{ steps.files.outputs.all_changed_files }}; do
-          if [ -f "$file" ]; then
-            echo "Analyzing $file..." >> complexity-report.md
-            ./build/catchy "$file" --threshold=${{ inputs.threshold }} >> complexity-report.md
-            echo "" >> complexity-report.md
+        cd catchy
+        HIGH_COMPLEXITY=false
+        for file in ${{ steps.pr-files.outputs.files}}; do
+          if [[ $file =~ \.(cpp|hpp|h|c|py)$ ]] && [ -f "../$file" ]; then
+            echo "Analyzing $file..."
+            if ! ./build/catchy "../$file" --threshold=${{ inputs.threshold }}; then
+              HIGH_COMPLEXITY=true
+            fi
           fi
         done
-        echo "\`\`\`" >> complexity-report.md
-        cat complexity-report.md >> $GITHUB_STEP_SUMMARY
+        
+        if [ "$HIGH_COMPLEXITY" = true ]; then
+          echo "❌ Some files exceed complexity threshold of ${{ inputs.threshold }}"
+          exit 1
+        else
+          echo "✅ All files passed complexity check"
+        fi
+
+branding:
+  icon: 'anchor'
+  color: 'blue'
